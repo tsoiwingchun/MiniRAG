@@ -17,9 +17,22 @@ from .base import (
 from .prompt import GRAPH_FIELD_SEP, PROMPTS
 
 
-def chunking_by_token_size(
-    content: str, overlap_token_size=128, max_token_size=1024, tiktoken_model="gpt-4o"
-):
+def chunking_by_token_size(content: str, overlap_token_size=128, max_token_size=1024, tiktoken_model="gpt-4o"):
+    """
+    Splits the input content into chunks based on token size, with optional overlap.
+
+    Args:
+        content (str): The input text to be chunked.
+        overlap_token_size (int, optional): The number of tokens to overlap between chunks. Defaults to 128.
+        max_token_size (int, optional): The maximum number of tokens per chunk. Defaults to 1024.
+        tiktoken_model (str, optional): The model name to use for token encoding and decoding. Defaults to "gpt-4o".
+
+    Returns:
+        list: A list of dictionaries, each containing:
+            - "tokens" (int): The number of tokens in the chunk.
+            - "content" (str): The chunked content.
+            - "chunk_order_index" (int): The order index of the chunk.
+    """
     tokens = encode_string_by_tiktoken(content, model_name=tiktoken_model)
     results = []
     for index, start in enumerate(
@@ -43,7 +56,15 @@ async def _handle_entity_relation_summary(
     description: str,
     global_config: dict,
 ) -> str:
-    
+    """
+    Asynchronously handles the summary of an entity or relation description.
+    Args:
+        entity_or_relation_name (str): The name of the entity or relation.
+        description (str): The description of the entity or relation.
+        global_config (dict): A dictionary containing global configuration parameters.
+    Returns:
+        str: The original description if its token length is less than the maximum summary tokens, otherwise a summarized version of the description.
+    """
     use_llm_func: callable = global_config["llm_model_func"]
     llm_max_tokens = global_config["llm_model_max_token_size"]
     tiktoken_model_name = global_config["tiktoken_model_name"]
@@ -60,6 +81,16 @@ async def _handle_single_entity_extraction(
     record_attributes: list[str],
     chunk_key: str,
 ):
+    """
+    Asynchronously handles the extraction of a single entity from a list of record attributes.
+
+    Args:
+        record_attributes (list[str]): A list of strings representing the attributes of the record.
+        chunk_key (str): A string representing the key of the chunk from which the record was extracted.
+
+    Returns:
+        dict or None: A dictionary containing the extracted entity's name, type, description, and source ID if the extraction is successful; otherwise, None.
+    """
     if len(record_attributes) < 4 or record_attributes[0] != '"entity"':
         return None
     # add this record as a node in the G
@@ -81,6 +112,31 @@ async def _handle_single_relationship_extraction(
     record_attributes: list[str],
     chunk_key: str,
 ):
+    """
+    Extracts and processes a single relationship record from the provided attributes.
+
+    Args:
+        record_attributes (list[str]): A list of attributes describing the relationship.
+            Expected to contain at least 5 elements where:
+            - record_attributes[0] should be '"relationship"'
+            - record_attributes[1] is the source node
+            - record_attributes[2] is the target node
+            - record_attributes[3] is the edge description
+            - record_attributes[4] is the edge keywords
+            - record_attributes[-1] (optional) is the weight of the relationship
+
+        chunk_key (str): A unique identifier for the chunk of data being processed.
+
+    Returns:
+        dict or None: A dictionary containing the processed relationship data with keys:
+            - 'src_id': The source node ID
+            - 'tgt_id': The target node ID
+            - 'weight': The weight of the relationship (default is 1.0 if not provided)
+            - 'description': The description of the edge
+            - 'keywords': The keywords associated with the edge
+            - 'source_id': The ID of the source chunk
+            Returns None if the input does not meet the required criteria.
+    """
     if len(record_attributes) < 5 or record_attributes[0] != '"relationship"':
         return None
     # add this record as edge
@@ -109,6 +165,23 @@ async def _merge_nodes_then_upsert(
     knowledge_graph_inst: BaseGraphStorage,
     global_config: dict,
 ):
+    """
+    Asynchronously merges nodes data and upserts the resulting node into the knowledge graph.
+
+    This function takes an entity name and a list of node data dictionaries, merges the data,
+    and upserts the resulting node into the provided knowledge graph instance. It ensures that
+    the entity type, description, and source IDs are appropriately combined and updated.
+
+    Args:
+        entity_name (str): The name of the entity to be merged and upserted.
+        nodes_data (list[dict]): A list of dictionaries containing node data to be merged.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+        global_config (dict): A dictionary containing global configuration settings.
+
+    Returns:
+        dict: A dictionary containing the upserted node data, including the entity name, entity type,
+              description, and source IDs.
+    """
     already_entitiy_types = []
     already_source_ids = []
     already_description = []
@@ -159,6 +232,19 @@ async def _merge_edges_then_upsert(
     knowledge_graph_inst: BaseGraphStorage,
     global_config: dict,
 ):
+    """
+    Merges edges between two nodes and upserts the resulting edge into the knowledge graph.
+
+    Args:
+        src_id (str): The source node ID.
+        tgt_id (str): The target node ID.
+        edges_data (list[dict]): A list of dictionaries containing edge data to be merged.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+        global_config (dict): Global configuration dictionary.
+
+    Returns:
+        dict: A dictionary containing the merged edge data with keys 'src_id', 'tgt_id', 'description', and 'keywords'.
+    """
     already_weights = []
     already_source_ids = []
     already_description = []
@@ -227,6 +313,27 @@ async def extract_entities(
     relationships_vdb: BaseVectorStorage,
     global_config: dict,
 ) -> Union[BaseGraphStorage, None]:
+    """
+    Extract entities and relationships from text chunks using a language model.
+    This function processes text chunks to extract entities and relationships using a specified language model function. 
+    The extracted entities and relationships are then upserted into the provided knowledge graph and vector databases.
+    Args:
+        chunks (dict[str, TextChunkSchema]): A dictionary of text chunks to process.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+        entity_vdb (BaseVectorStorage): An instance of the vector database for entities.
+        entity_name_vdb (BaseVectorStorage): An instance of the vector database for entity names.
+        relationships_vdb (BaseVectorStorage): An instance of the vector database for relationships.
+        global_config (dict): A dictionary containing global configuration settings.
+    Returns:
+        Union[BaseGraphStorage, None]: The updated knowledge graph storage instance, or None if no entities or relationships were extracted.
+    Raises:
+        KeyError: If required keys are missing in the global_config dictionary.
+        ValueError: If the language model function returns unexpected results.
+    Notes:
+        - The function uses asynchronous processing to handle multiple text chunks concurrently.
+        - The language model function is expected to be provided in the global_config dictionary.
+        - The function supports a maximum number of gleaning iterations specified in the global_config dictionary.
+    """
     use_llm_func: callable = global_config["llm_model_func"]
     entity_extract_max_gleaning = global_config["entity_extract_max_gleaning"]
 
@@ -395,6 +502,24 @@ async def local_query(
     query_param: QueryParam,
     global_config: dict,
 ) -> str:
+    """
+    Asynchronously performs a local query using a knowledge graph, vector databases, and text chunks database.
+
+    Args:
+        query (str): The query string to be processed.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+        entities_vdb (BaseVectorStorage): An instance of the vector database for entities.
+        relationships_vdb (BaseVectorStorage): An instance of the vector database for relationships.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): An instance of the key-value storage for text chunks.
+        query_param (QueryParam): Parameters for the query.
+        global_config (dict): Global configuration dictionary containing the language model function.
+
+    Returns:
+        str: The response generated from the query.
+
+    Raises:
+        json.JSONDecodeError: If there is an error parsing JSON data.
+    """
     context = None
     use_model_func = global_config["llm_model_func"]
 
@@ -547,6 +672,18 @@ async def _find_most_related_text_unit_from_entities(
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     knowledge_graph_inst: BaseGraphStorage,
 ):
+    """
+    Find the most related text units from entities based on the provided node data and query parameters.
+
+    Args:
+        node_datas (list[dict]): A list of dictionaries containing node data, each with keys such as "source_id" and "entity_name".
+        query_param (QueryParam): Query parameters including the maximum token size for text units.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): An instance of a key-value storage for text chunks.
+        knowledge_graph_inst (BaseGraphStorage): An instance of a knowledge graph storage.
+
+    Returns:
+        list[dict]: A list of dictionaries representing the most related text units, each containing the text unit data.
+    """
     text_units = [
         split_string_by_multi_markers(dp["source_id"], [GRAPH_FIELD_SEP])
         for dp in node_datas
@@ -624,6 +761,23 @@ async def _find_most_related_edges_from_entities(
     query_param: QueryParam,
     knowledge_graph_inst: BaseGraphStorage,
 ):
+    """
+    Asynchronously finds the most related edges from entities in a knowledge graph.
+
+    This function retrieves edges related to a list of entities from a knowledge graph,
+    ranks them based on their degree and weight, and truncates the list to fit within a 
+    specified token size.
+
+    Args:
+        node_datas (list[dict]): A list of dictionaries containing entity data.
+        query_param (QueryParam): Parameters for querying the knowledge graph, including
+                                  the maximum token size for the global context.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+
+    Returns:
+        list[dict]: A list of dictionaries representing the most related edges, sorted by
+                    rank and weight, and truncated to fit within the specified token size.
+    """
     all_related_edges = await asyncio.gather(
         *[knowledge_graph_inst.get_node_edges(dp["entity_name"]) for dp in node_datas]
     )
@@ -662,6 +816,24 @@ async def global_query(
     query_param: QueryParam,
     global_config: dict,
 ) -> str:
+    """
+    Asynchronously performs a global query using a language model and various storage instances.
+
+    Args:
+        query (str): The query string to be processed.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+        entities_vdb (BaseVectorStorage): An instance of the vector database for entities.
+        relationships_vdb (BaseVectorStorage): An instance of the vector database for relationships.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): An instance of the key-value storage for text chunks.
+        query_param (QueryParam): Parameters for the query.
+        global_config (dict): Global configuration dictionary containing the language model function.
+
+    Returns:
+        str: The response generated by the language model or a failure response if an error occurs.
+
+    Raises:
+        json.JSONDecodeError: If there is an error parsing the JSON response from the language model.
+    """
     context = None
     use_model_func = global_config["llm_model_func"]
 
@@ -737,6 +909,20 @@ async def _build_global_query_context(
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     query_param: QueryParam,
 ):
+    """
+    Build a global query context by querying relationships and entities from the knowledge graph and vector databases.
+
+    Args:
+        keywords (list): List of keywords to query.
+        knowledge_graph_inst (BaseGraphStorage): Instance of the knowledge graph storage.
+        entities_vdb (BaseVectorStorage): Vector database for entities.
+        relationships_vdb (BaseVectorStorage): Vector database for relationships.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): Key-value storage for text chunks.
+        query_param (QueryParam): Parameters for the query, including top_k and max_token_for_global_context.
+
+    Returns:
+        str: A formatted string containing entities, relationships, and text units in CSV format, or None if no results are found.
+    """
     results = await relationships_vdb.query(keywords, top_k=query_param.top_k)
 
     if not len(results):
@@ -830,6 +1016,29 @@ async def _find_most_related_entities_from_relationships(
     query_param: QueryParam,
     knowledge_graph_inst: BaseGraphStorage,
 ):
+    """
+    Asynchronously find the most related entities from relationships.
+
+    This function takes a list of edge data dictionaries, a query parameter object, 
+    and a knowledge graph instance. It extracts unique entity names from the edge 
+    data, retrieves node data and node degrees for these entities from the knowledge 
+    graph, and then combines this information into a list of node data dictionaries. 
+    The list is truncated based on a maximum token size specified in the query 
+    parameters.
+
+    Args:
+        edge_datas (list[dict]): A list of dictionaries containing edge data with 
+            "src_id" and "tgt_id" keys representing source and target entity IDs.
+        query_param (QueryParam): An object containing query parameters, including 
+            the maximum token size for local context.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph 
+            storage class used to retrieve node data and node degrees.
+
+    Returns:
+        list[dict]: A list of dictionaries containing node data, each with an 
+            "entity_name" key, a "rank" key representing the node degree, and other 
+            node attributes.
+    """
     entity_names = set()
     for e in edge_datas:
         entity_names.add(e["src_id"])
@@ -862,6 +1071,26 @@ async def _find_related_text_unit_from_relationships(
     text_chunks_db: BaseKVStorage[TextChunkSchema],
     knowledge_graph_inst: BaseGraphStorage,
 ):
+    """
+    Asynchronously finds related text units from relationships.
+
+    This function processes a list of edge data dictionaries to extract related text units
+    based on their relationships. It retrieves the text chunks from a key-value storage
+    and sorts them according to their order in the edge data. The function also ensures
+    that the total token size of the text units does not exceed a specified maximum.
+
+    Args:
+        edge_datas (list[dict]): A list of dictionaries containing edge data with source IDs.
+        query_param (QueryParam): Query parameters including the maximum token size for text units.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): A key-value storage instance for text chunks.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+
+    Returns:
+        list[TextChunkSchema]: A list of text chunk schemas representing the related text units.
+
+    Raises:
+        Warning: Logs a warning if any text chunks are missing from the storage.
+    """
     text_units = [
         split_string_by_multi_markers(dp["source_id"], [GRAPH_FIELD_SEP])
         for dp in edge_datas
@@ -902,6 +1131,25 @@ async def hybrid_query(
     query_param: QueryParam,
     global_config: dict,
 ) -> str:
+    """
+    Perform a hybrid query using a combination of local and global contexts.
+
+    This function extracts keywords from the query using a language model function,
+    builds local and global query contexts based on the extracted keywords, and
+    generates a response using the combined context.
+
+    Args:
+        query (str): The input query string.
+        knowledge_graph_inst (BaseGraphStorage): Instance of the knowledge graph storage.
+        entities_vdb (BaseVectorStorage): Vector database for entities.
+        relationships_vdb (BaseVectorStorage): Vector database for relationships.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): Key-value storage for text chunks.
+        query_param (QueryParam): Parameters for the query.
+        global_config (dict): Global configuration dictionary containing the language model function.
+
+    Returns:
+        str: The generated response based on the combined context or a failure response if an error occurs.
+    """
     low_level_context = None
     high_level_context = None
     use_model_func = global_config["llm_model_func"]
@@ -983,8 +1231,21 @@ async def hybrid_query(
 
 
 def combine_contexts(high_level_context, low_level_context):
+    """
+    Combines high-level and low-level context strings by extracting entities, relationships, and sources,
+    then deduplicating and chunking them to fit within a specified token size.
+    Args:
+        high_level_context (str): The high-level context string containing entities, relationships, and sources.
+        low_level_context (str): The low-level context string containing entities, relationships, and sources.
+    Returns:
+        str: A formatted string containing the combined and deduplicated entities, relationships, and sources
+             from both high-level and low-level contexts.
+    Raises:
+        UserWarning: If either high_level_context or low_level_context is None, a warning is issued and empty
+                     entities, relationships, and sources are used for that context.
+                    
     # Function to extract entities, relationships, and sources from context strings
-
+    """
     def extract_sections(context):
         entities_match = re.search(
             r"-----Entities-----\s*```csv\s*(.*?)\s*```", context, re.DOTALL
@@ -1056,6 +1317,22 @@ async def naive_query(
     query_param: QueryParam,
     global_config: dict,
 ):
+    """
+    Asynchronously performs a naive query on the provided vector database and key-value storage.
+
+    Args:
+        query (str): The query string to search for.
+        chunks_vdb (BaseVectorStorage): The vector database to query against.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): The key-value storage to retrieve text chunks from.
+        query_param (QueryParam): Parameters for the query, including top_k and max_token_for_text_unit.
+        global_config (dict): Global configuration dictionary containing the LLM model function.
+
+    Returns:
+        str: The response generated by the model or a context section if only_need_context is True.
+
+    Raises:
+        KeyError: If the global_config does not contain the required "llm_model_func" key.
+    """
     use_model_func = global_config["llm_model_func"]
     results = await chunks_vdb.query(query, top_k=query_param.top_k)
     if not len(results):
@@ -1103,6 +1380,17 @@ async def naive_query(
 
 
 async def path2chunk(scored_edged_reasoning_path,knowledge_graph_inst, pairs_append, query,max_chunks = 5):
+    """
+        Processes a scored edged reasoning path to generate chunks of text units based on the knowledge graph.
+        Args:
+            scored_edged_reasoning_path (dict): A dictionary containing the scored edged reasoning paths.
+            knowledge_graph_inst (object): An instance of the knowledge graph to retrieve nodes and edges.
+            pairs_append (dict): A dictionary containing pairs of edges to be appended.
+            query (str): A query string to filter and rank text units.
+            max_chunks (int, optional): The maximum number of chunks to return. Defaults to 5.
+        Returns:
+            dict: The updated scored edged reasoning path with the generated chunks.
+    """
     already_node = {}
     for k,v in scored_edged_reasoning_path.items():
         node_chunk_id = None
@@ -1179,12 +1467,36 @@ async def path2chunk(scored_edged_reasoning_path,knowledge_graph_inst, pairs_app
     return scored_edged_reasoning_path
 
 def scorednode2chunk(input_dict, values_dict):
+    """
+    Transforms the values in the input dictionary based on a mapping provided by values_dict.
+
+    For each key in input_dict, the function replaces the list of values with a new list where each value 
+    is replaced by its corresponding value in values_dict. If a value does not exist in values_dict, it is 
+    replaced with None and subsequently removed from the list.
+
+    Args:
+        input_dict (dict): A dictionary where each key maps to a list of values.
+        values_dict (dict): A dictionary providing the mapping of values to their new values.
+
+    Returns:
+        None: The function modifies input_dict in place.
+    """
     for key, value_list in input_dict.items():
         input_dict[key] = [values_dict.get(val, None) for val in value_list if val in values_dict]
         input_dict[key] = [val for val in input_dict[key] if val is not None]
 
 
 def kwd2chunk(ent_from_query_dict,chunks_ids,chunk_nums):
+        """
+            Processes a dictionary of entities from a query and returns a list of chunk IDs based on their scores.
+            Args:
+                ent_from_query_dict (dict): A dictionary where keys are entities and values are lists of dictionaries.
+                                            Each dictionary contains 'Score' and 'Path' keys.
+                chunks_ids (list): A list of valid chunk IDs.
+                chunk_nums (int): The number of top chunk IDs to return.
+            Returns:
+                list: A list of the top chunk IDs based on their scores.
+        """
         final_chunk = Counter()
         final_chunk_id = []
         for key,list_of_dicts in ent_from_query_dict.items():
@@ -1231,7 +1543,24 @@ async def _build_mini_query_context(
     embedder,
     query_param: QueryParam,
 ):
-
+    """
+    Builds a mini query context by processing entities from the query, querying various vector databases,
+    and constructing reasoning paths and context information.
+    Args:
+        ent_from_query (list): List of entities extracted from the query.
+        type_keywords (list): List of type keywords to filter nodes in the knowledge graph.
+        originalquery (str): The original query string.
+        knowledge_graph_inst (BaseGraphStorage): Instance of the knowledge graph storage.
+        entities_vdb (BaseVectorStorage): Vector database for entities.
+        entity_name_vdb (BaseVectorStorage): Vector database for entity names.
+        relationships_vdb (BaseVectorStorage): Vector database for relationships.
+        chunks_vdb (BaseVectorStorage): Vector database for chunks.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): Key-value storage for text chunks.
+        embedder: Embedder instance for embedding operations.
+        query_param (QueryParam): Parameters for the query.
+    Returns:
+        str: A formatted string containing entities and sources in CSV format.
+    """
     imp_ents = []
     nodes_from_query_list = []
     ent_from_query_dict = {}
@@ -1357,6 +1686,24 @@ async def minirag_query(#MiniRAG
     query_param: QueryParam,
     global_config: dict,
 ) -> str:
+    """
+    Asynchronously processes a query using the MiniRAG system.
+    This function takes a query and various storage instances, processes the query to extract keywords and entities,
+    builds a context, and generates a response using a specified language model function.
+    Args:
+        query (str): The input query string.
+        knowledge_graph_inst (BaseGraphStorage): An instance of the knowledge graph storage.
+        entities_vdb (BaseVectorStorage): An instance of the vector database for entities.
+        entity_name_vdb (BaseVectorStorage): An instance of the vector database for entity names.
+        relationships_vdb (BaseVectorStorage): An instance of the vector database for relationships.
+        chunks_vdb (BaseVectorStorage): An instance of the vector database for text chunks.
+        text_chunks_db (BaseKVStorage[TextChunkSchema]): An instance of the key-value storage for text chunks.
+        embedder: The embedding model or function.
+        query_param (QueryParam): Parameters for the query.
+        global_config (dict): Global configuration dictionary.
+    Returns:
+        str: The generated response or context based on the query parameters.
+    """
     use_model_func = global_config["llm_model_func"]
     kw_prompt_temp = PROMPTS["minirag_query2kwd"]
     TYPE_POOL,TYPE_POOL_w_CASE = await knowledge_graph_inst.get_types()

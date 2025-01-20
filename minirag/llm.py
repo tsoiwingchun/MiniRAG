@@ -48,6 +48,24 @@ async def openai_complete_if_cache(
     api_key=None,
     **kwargs,
 ) -> str:
+    """
+    Asynchronously generates a completion using OpenAI's API with optional caching.
+    Args:
+        model (str): The model to use for generating the completion.
+        prompt (str): The user prompt to generate a response for.
+        system_prompt (str, optional): An optional system prompt to include in the messages. Defaults to None.
+        history_messages (list, optional): A list of previous messages to include in the conversation history. Defaults to an empty list.
+        base_url (str, optional): The base URL for the OpenAI API. Defaults to None.
+        api_key (str, optional): The API key for authenticating with the OpenAI API. Defaults to None.
+        **kwargs: Additional keyword arguments to pass to the OpenAI API.
+    Returns:
+        str: The generated completion from the OpenAI API.
+    Raises:
+        Exception: If there is an error with the OpenAI API request.
+    Notes:
+        - If `api_key` is provided, it will be set in the environment variables.
+        - If `hashing_kv` is provided in `kwargs`, it will be used to cache and retrieve responses based on the hash of the input arguments.
+    """
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key
 
@@ -92,6 +110,33 @@ async def azure_openai_complete_if_cache(
     api_key=None,
     **kwargs,
 ):
+    """
+    Asynchronously completes a prompt using Azure OpenAI, with optional caching.
+
+    Args:
+        model (str): The model to use for completion.
+        prompt (str): The user prompt to complete.
+        system_prompt (str, optional): The system prompt to include in the messages. Defaults to None.
+        history_messages (list, optional): A list of previous messages in the conversation. Defaults to [].
+        base_url (str, optional): The base URL for the Azure OpenAI endpoint. Defaults to None.
+        api_key (str, optional): The API key for Azure OpenAI. Defaults to None.
+        **kwargs: Additional keyword arguments to pass to the OpenAI client.
+
+    Keyword Args:
+        hashing_kv (BaseKVStorage, optional): A key-value storage for caching responses. Defaults to None.
+
+    Returns:
+        str: The completion response from the OpenAI model.
+
+    Raises:
+        Exception: If there is an error with the OpenAI API request.
+
+    Notes:
+        - If `api_key` is provided, it will be set in the environment variable `AZURE_OPENAI_API_KEY`.
+        - If `base_url` is provided, it will be set in the environment variable `AZURE_OPENAI_ENDPOINT`.
+        - If `hashing_kv` is provided, the function will attempt to retrieve a cached response before making an API call.
+        - The response will be cached using `hashing_kv` if provided.
+    """
     if api_key:
         os.environ["AZURE_OPENAI_API_KEY"] = api_key
     if base_url:
@@ -218,6 +263,22 @@ async def bedrock_complete_if_cache(
 
 @lru_cache(maxsize=1)
 def initialize_hf_model(model_name):
+    """
+    Initialize a Hugging Face model and tokenizer for causal language modeling.
+
+    Args:
+        model_name (str): The name or path of the pre-trained model to load.
+
+    Returns:
+        tuple: A tuple containing the initialized model and tokenizer.
+            - hf_model: The loaded Hugging Face model for causal language modeling.
+            - hf_tokenizer: The tokenizer associated with the model.
+
+    Notes:
+        - The tokenizer's pad_token is set to eos_token if it is not already defined.
+        - The `device_map` is set to "auto" to automatically place the model on the appropriate device.
+        - `trust_remote_code` is set to True to allow loading custom code from the model repository.
+    """
     hf_tokenizer = AutoTokenizer.from_pretrained(
         model_name, device_map="auto", trust_remote_code=True#False
     )
@@ -233,6 +294,18 @@ def initialize_hf_model(model_name):
 async def hf_model_if_cache(
     model, prompt, system_prompt=None, history_messages=[], **kwargs
 ) -> str:
+    """
+    Generates a response from a Hugging Face model, optionally using a cache to store and retrieve results.
+    Args:
+        model (str): The name of the Hugging Face model to use.
+        prompt (str): The user prompt to generate a response for.
+        system_prompt (str, optional): An optional system prompt to include in the conversation history.
+        history_messages (list, optional): A list of previous messages in the conversation history.
+        **kwargs: Additional keyword arguments, including:
+            - hashing_kv (BaseKVStorage, optional): A key-value storage for caching responses.
+    Returns:
+        str: The generated response from the model, or a cached response if available.
+    """
     model_name = model
     hf_model, hf_tokenizer = initialize_hf_model(model_name)
     hashing_kv: BaseKVStorage = kwargs.pop("hashing_kv", None)
@@ -310,6 +383,30 @@ async def hf_model_if_cache(
 async def ollama_model_if_cache(
     model, prompt, system_prompt=None, history_messages=[], **kwargs
 ) -> str:
+    """
+    Asynchronously interacts with the Ollama model, utilizing a cache to store and retrieve responses.
+
+    Args:
+        model (str): The name of the model to interact with.
+        prompt (str): The user prompt to send to the model.
+        system_prompt (str, optional): An optional system prompt to set the context for the model. Defaults to None.
+        history_messages (list, optional): A list of previous messages to include in the conversation history. Defaults to an empty list.
+        **kwargs: Additional keyword arguments to pass to the Ollama client.
+
+    Keyword Args:
+        max_tokens (int, optional): Maximum number of tokens to generate. This argument is removed before passing to the client.
+        response_format (str, optional): The format of the response. This argument is removed before passing to the client.
+        host (str, optional): The host address for the Ollama client. Defaults to None.
+        timeout (int, optional): The timeout duration for the Ollama client. Defaults to None.
+        hashing_kv (BaseKVStorage, optional): An optional key-value storage for caching responses. Defaults to None.
+
+    Returns:
+        str: The response from the Ollama model.
+
+    Raises:
+        Exception: If an error occurs during the interaction with the Ollama model or the cache.
+
+    """
     kwargs.pop("max_tokens", None)
     kwargs.pop("response_format", None)
     host = kwargs.pop("host", None)
@@ -348,6 +445,20 @@ def initialize_lmdeploy_pipeline(
     model_format="hf",
     quant_policy=0,
 ):
+    """
+    Initialize the lmdeploy pipeline with the given configuration.
+
+    Args:
+        model (str): Path to the model.
+        tp (int, optional): Tensor parallelism degree. Defaults to 1.
+        chat_template (str, optional): Name of the chat template. Defaults to None.
+        log_level (str, optional): Logging level. Defaults to "WARNING".
+        model_format (str, optional): Format of the model. Defaults to "hf".
+        quant_policy (int, optional): Quantization policy. Defaults to 0.
+
+    Returns:
+        lmdeploy.pipeline: Initialized lmdeploy pipeline object.
+    """
     from lmdeploy import pipeline, ChatTemplateConfig, TurbomindEngineConfig
 
     lmdeploy_pipe = pipeline(
@@ -471,6 +582,18 @@ async def lmdeploy_model_if_cache(
 async def gpt_4o_complete(
     prompt, system_prompt=None, history_messages=[], **kwargs
 ) -> str:
+    """
+    Asynchronously generates a completion using the GPT-4o model.
+
+    Args:
+        prompt (str): The input prompt to generate the completion.
+        system_prompt (str, optional): An optional system prompt to guide the completion.
+        history_messages (list, optional): A list of previous messages to provide context for the completion.
+        **kwargs: Additional keyword arguments to pass to the completion function.
+
+    Returns:
+        str: The generated completion from the GPT-4o model.
+    """
     return await openai_complete_if_cache(
         "gpt-4o",
         prompt,
@@ -554,6 +677,21 @@ async def openai_embedding(
     base_url: str = None,
     api_key: str = None,
 ) -> np.ndarray:
+    """
+    Generate embeddings for a list of texts using OpenAI's embedding model.
+
+    Args:
+        texts (list[str]): A list of texts to generate embeddings for.
+        model (str, optional): The model to use for generating embeddings. Defaults to "text-embedding-3-small".
+        base_url (str, optional): The base URL for the OpenAI API. Defaults to None.
+        api_key (str, optional): The API key for authenticating with the OpenAI API. Defaults to None.
+
+    Returns:
+        np.ndarray: A numpy array containing the embeddings for the input texts.
+
+    Raises:
+        openai.error.OpenAIError: If an error occurs while communicating with the OpenAI API.
+    """
     if api_key:
         os.environ["OPENAI_API_KEY"] = api_key
 
@@ -578,6 +716,28 @@ async def azure_openai_embedding(
     base_url: str = None,
     api_key: str = None,
 ) -> np.ndarray:
+    """
+    Asynchronously generates embeddings for a list of texts using Azure OpenAI.
+
+    Args:
+        texts (list[str]): A list of texts to generate embeddings for.
+        model (str, optional): The model to use for generating embeddings. Defaults to "text-embedding-3-small".
+        base_url (str, optional): The base URL for the Azure OpenAI endpoint. If provided, it will be set in the environment variables.
+        api_key (str, optional): The API key for accessing Azure OpenAI. If provided, it will be set in the environment variables.
+
+    Returns:
+        np.ndarray: A NumPy array containing the embeddings for the input texts.
+
+    Raises:
+        Exception: If there is an error in generating embeddings.
+
+    Example:
+        embeddings = await azure_openai_embedding(
+            texts=["Hello, world!", "How are you?"],
+            model="text-embedding-3-small",
+            base_url="https://your-azure-endpoint",
+            api_key="your-api-key"
+    """
     if api_key:
         os.environ["AZURE_OPENAI_API_KEY"] = api_key
     if base_url:
@@ -607,6 +767,22 @@ async def siliconcloud_embedding(
     max_token_size: int = 512,
     api_key: str = None,
 ) -> np.ndarray:
+    """
+    Asynchronously fetches embeddings for a list of texts from the SiliconCloud API.
+
+    Args:
+        texts (list[str]): A list of input texts to be embedded.
+        model (str, optional): The model to use for generating embeddings. Defaults to "netease-youdao/bce-embedding-base_v1".
+        base_url (str, optional): The base URL of the SiliconCloud API. Defaults to "https://api.siliconflow.cn/v1/embeddings".
+        max_token_size (int, optional): The maximum number of tokens to consider for each text. Defaults to 512.
+        api_key (str, optional): The API key for authentication. If provided, it should start with "Bearer ".
+
+    Returns:
+        np.ndarray: A NumPy array containing the embeddings for the input texts.
+
+    Raises:
+        ValueError: If the API response contains an error code.
+    """
     if api_key and not api_key.startswith("Bearer "):
         api_key = "Bearer " + api_key
 
@@ -646,6 +822,22 @@ async def bedrock_embedding(
     aws_secret_access_key=None,
     aws_session_token=None,
 ) -> np.ndarray:
+    """
+    Asynchronously generates embeddings for a list of texts using the specified model from Amazon Bedrock.
+
+    Args:
+        texts (list[str]): A list of texts to generate embeddings for.
+        model (str, optional): The model to use for generating embeddings. Defaults to "amazon.titan-embed-text-v2:0".
+        aws_access_key_id (str, optional): AWS access key ID. Defaults to None.
+        aws_secret_access_key (str, optional): AWS secret access key. Defaults to None.
+        aws_session_token (str, optional): AWS session token. Defaults to None.
+
+    Returns:
+        np.ndarray: A numpy array containing the generated embeddings.
+
+    Raises:
+        ValueError: If the specified model or model provider is not supported.
+    """
     os.environ["AWS_ACCESS_KEY_ID"] = os.environ.get(
         "AWS_ACCESS_KEY_ID", aws_access_key_id
     )
@@ -706,6 +898,17 @@ async def bedrock_embedding(
 
 
 async def hf_embedding(texts: list[str], tokenizer, embed_model) -> np.ndarray:
+    """
+    Generate embeddings for a list of texts using a Hugging Face model.
+
+    Args:
+        texts (list[str]): A list of input texts to be embedded.
+        tokenizer: The tokenizer to preprocess the input texts.
+        embed_model: The Hugging Face model to generate embeddings.
+
+    Returns:
+        np.ndarray: A numpy array containing the embeddings for the input texts.
+    """
     embed_model.to('cuda:0')
     input_ids = tokenizer(
         texts, return_tensors="pt", padding=True, truncation=True
@@ -717,6 +920,17 @@ async def hf_embedding(texts: list[str], tokenizer, embed_model) -> np.ndarray:
 
 
 async def ollama_embedding(texts: list[str], embed_model, **kwargs) -> np.ndarray:
+    """
+    Generate embeddings for a list of texts using the Ollama API.
+
+    Args:
+        texts (list[str]): A list of text strings to generate embeddings for.
+        embed_model: The embedding model to use with the Ollama API.
+        **kwargs: Additional keyword arguments to pass to the Ollama client.
+
+    Returns:
+        np.ndarray: An array of embeddings for the input texts.
+    """
     embed_text = []
     ollama_client = ollama.Client(**kwargs)
     for text in texts:

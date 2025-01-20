@@ -51,6 +51,17 @@ from .kg.oracle_impl import OracleKVStorage, OracleGraphStorage, OracleVectorDBS
 
 
 def always_get_an_event_loop() -> asyncio.AbstractEventLoop:
+    """
+    Ensure that an asyncio event loop is always available.
+
+    This function attempts to retrieve the current event loop using 
+    `asyncio.get_event_loop()`. If no event loop is found (which raises a 
+    RuntimeError), it creates a new event loop, sets it as the current event 
+    loop, and returns it.
+
+    Returns:
+        asyncio.AbstractEventLoop: The current or newly created event loop.
+    """
     try:
         return asyncio.get_event_loop()
 
@@ -121,6 +132,36 @@ class MiniRAG:
     convert_response_to_json_func: callable = convert_response_to_json
 
     def __post_init__(self):
+        """
+        Post-initialization method for setting up the MiniRAG instance.
+
+        This method performs the following tasks:
+        1. Initializes the logger and sets the logging level.
+        2. Logs the initialization parameters.
+        3. Sets up storage classes for key-value, vector, and graph storage.
+        4. Creates the working directory if it does not exist.
+        5. Initializes the LLM response cache if enabled.
+        6. Limits the asynchronous function calls for the embedding function.
+        7. Initializes storage for full documents, text chunks, and chunk entity relation graph.
+        8. Initializes vector databases for entities, entity names, relationships, and chunks.
+        9. Limits the asynchronous function calls for the LLM model function.
+
+        Attributes:
+            log_file (str): Path to the log file.
+            key_string_value_json_storage_cls (Type[BaseKVStorage]): Class for key-value storage.
+            vector_db_storage_cls (Type[BaseVectorStorage]): Class for vector database storage.
+            graph_storage_cls (Type[BaseGraphStorage]): Class for graph storage.
+            llm_response_cache (Optional[BaseKVStorage]): Cache for LLM responses.
+            embedding_func (Callable): Embedding function with limited async calls.
+            full_docs (BaseKVStorage): Storage for full documents.
+            text_chunks (BaseKVStorage): Storage for text chunks.
+            chunk_entity_relation_graph (BaseGraphStorage): Storage for chunk entity relation graph.
+            entities_vdb (BaseVectorStorage): Vector database for entities.
+            entity_name_vdb (BaseVectorStorage): Vector database for entity names.
+            relationships_vdb (BaseVectorStorage): Vector database for relationships.
+            chunks_vdb (BaseVectorStorage): Vector database for chunks.
+            llm_model_func (Callable): LLM model function with limited async calls.
+        """
         log_file = os.path.join(self.working_dir, "minirag.log")
         set_logger(log_file)
         logger.setLevel(self.log_level)
@@ -235,10 +276,47 @@ class MiniRAG:
         }
 
     def insert(self, string_or_strings):
+        """
+        Inserts a string or a list of strings into the database asynchronously.
+
+        Args:
+            string_or_strings (str or list of str): The string or list of strings to be inserted.
+
+        Returns:
+            The result of the asynchronous insertion operation.
+        """
         loop = always_get_an_event_loop()
         return loop.run_until_complete(self.ainsert(string_or_strings))
 
     async def ainsert(self, string_or_strings):
+        """
+        Asynchronously inserts new documents and their corresponding chunks into storage.
+
+        Args:
+            string_or_strings (Union[str, List[str]]): A single string or a list of strings representing the documents to be inserted.
+
+        Returns:
+            None
+
+        Raises:
+            None
+
+        This method performs the following steps:
+            1. Converts a single string input into a list of strings if necessary.
+            2. Computes unique document IDs and filters out documents that are already in storage.
+            3. Logs the number of new documents to be inserted.
+            4. Chunks the documents based on token size and computes unique chunk IDs.
+            5. Filters out chunks that are already in storage.
+            6. Logs the number of new chunks to be inserted.
+            7. Inserts the new chunks into the chunk storage.
+            8. Extracts entities and relationships from the new chunks and updates the knowledge graph.
+            9. Inserts the new documents and chunks into their respective storages.
+            10. Calls a finalization method if any new documents or chunks were inserted.
+
+        Note:
+            - The method uses asynchronous operations for database interactions.
+            - Logging is used to provide information about the insertion process.
+        """
         update_storage = False
         try:
             if isinstance(string_or_strings, str):
@@ -305,6 +383,26 @@ class MiniRAG:
                 await self._insert_done()
 
     async def _insert_done(self):
+        """
+        Asynchronously calls the `index_done_callback` method on each non-None storage instance.
+
+        This method iterates over a list of storage instances and, for each instance that is not None,
+        it appends the `index_done_callback` coroutine to a list of tasks. It then awaits the completion
+        of all these tasks concurrently using `asyncio.gather`.
+
+        The storage instances include:
+        - self.full_docs
+        - self.text_chunks
+        - self.llm_response_cache
+        - self.entities_vdb
+        - self.entity_name_vdb
+        - self.relationships_vdb
+        - self.chunks_vdb
+        - self.chunk_entity_relation_graph
+
+        Returns:
+            None
+        """
         tasks = []
         for storage_inst in [
             self.full_docs,
@@ -322,10 +420,38 @@ class MiniRAG:
         await asyncio.gather(*tasks)
 
     def query(self, query: str, param: QueryParam = QueryParam()):
+        """
+        Executes a synchronous query using the provided query string and query parameters.
+
+        Args:
+            query (str): The query string to be executed.
+            param (QueryParam, optional): An instance of QueryParam containing query parameters. Defaults to an empty QueryParam instance.
+
+        Returns:
+            Any: The result of the asynchronous query execution.
+        """
         loop = always_get_an_event_loop()
         return loop.run_until_complete(self.aquery(query, param))
 
     async def aquery(self, query: str, param: QueryParam = QueryParam()):
+        """
+        Asynchronously performs a query based on the specified mode.
+
+        Args:
+            query (str): The query string to be processed.
+            param (QueryParam, optional): The parameters for the query, including the mode. Defaults to QueryParam().
+
+        Returns:
+            The response from the query, which varies based on the mode.
+
+        Raises:
+            ValueError: If the mode specified in param is unknown.
+
+        Modes:
+            - "light": Uses the hybrid_query function.
+            - "mini": Uses the minirag_query function.
+            - "naive": Uses the naive_query function.
+        """
         if param.mode == "light":
             response = await hybrid_query(
                 query,
@@ -363,6 +489,15 @@ class MiniRAG:
         return response
 
     async def _query_done(self):
+        """
+        Asynchronously checks if the query is done by invoking the `index_done_callback` method
+        on each storage instance in the `llm_response_cache`.
+
+        This method gathers all the tasks and waits for them to complete.
+
+        Returns:
+            None
+        """
         tasks = []
         for storage_inst in [self.llm_response_cache]:
             if storage_inst is None:
@@ -371,10 +506,32 @@ class MiniRAG:
         await asyncio.gather(*tasks)
 
     def delete_by_entity(self, entity_name: str):
+        """
+        Deletes an entity by its name.
+
+        Args:
+            entity_name (str): The name of the entity to be deleted.
+
+        Returns:
+            The result of the asynchronous delete operation.
+        """
         loop = always_get_an_event_loop()
         return loop.run_until_complete(self.adelete_by_entity(entity_name))
 
     async def adelete_by_entity(self, entity_name: str):
+        """
+        Asynchronously deletes an entity and its associated relationships from the database.
+
+        Args:
+            entity_name (str): The name of the entity to be deleted.
+
+        Raises:
+            Exception: If an error occurs while deleting the entity or its relationships.
+
+        Logs:
+            Info: When the entity and its relationships have been successfully deleted.
+            Error: If an error occurs during the deletion process.
+        """
         entity_name = f'"{entity_name.upper()}"'
 
         try:
@@ -390,6 +547,16 @@ class MiniRAG:
             logger.error(f"Error while deleting entity '{entity_name}': {e}")
 
     async def _delete_by_entity_done(self):
+        """
+        Asynchronously calls the `index_done_callback` method for each storage instance
+        in the list of entities, relationships, and chunk entity relation graph.
+
+        This method gathers the tasks for each non-None storage instance and waits for
+        all of them to complete.
+
+        Returns:
+            None
+        """
         tasks = []
         for storage_inst in [
             self.entities_vdb,
