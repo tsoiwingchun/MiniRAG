@@ -16,6 +16,11 @@ import numpy as np
 import tiktoken
 from nltk.metrics import edit_distance
 from rouge import Rouge
+from nltk.translate.bleu_score import sentence_bleu
+from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.tokenize import word_tokenize
+from nltk.translate.bleu_score import SmoothingFunction
 
 ENCODER = None
 
@@ -480,9 +485,33 @@ def calculate_similarity(sentences, target, method="levenshtein", n=1, k=1):
             scores = rouge.get_scores(sentence, target)
             rouge_score = scores[0].get(f"rouge-{n}", {}).get("f", 0)
             similarities_with_index.append((i, rouge_score))
+
+    elif method == "bert":
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        embeddings = model.encode(sentences + [target])
+        target_vec = embeddings[-1]
+        similarities_with_index = [(i, np.dot(embeddings[i], target_vec) /
+                                    (np.linalg.norm(embeddings[i]) * np.linalg.norm(target_vec)))
+                                   for i in range(len(sentences))]
+
+    elif method == "overlap":
+        for i, sentence in enumerate(sentences):
+            sentence_tokens = set(sentence.lower().split())
+            overlap = sentence_tokens.intersection(set(target_tokens))
+            score = len(overlap) / min(len(sentence_tokens), len(target_tokens)) if sentence_tokens else 0
+            similarities_with_index.append((i, score))
+
+    elif method == "bleu":
+        smooth_fn = SmoothingFunction().method1  # simple and effective
+        target_tokens_bleu = word_tokenize(target.lower())
+        for i, sentence in enumerate(sentences):
+            sentence_tokens_bleu = word_tokenize(sentence.lower())
+            score = sentence_bleu([target_tokens_bleu], sentence_tokens_bleu, smoothing_function=smooth_fn)
+            similarities_with_index.append((i, score))
+
+
     else:
-        raise ValueError(
-            "Unsupported method. Choose 'jaccard', 'levenshtein', or 'rouge'."
-        )
+        raise ValueError("Unsupported method. Choose from 'jaccard', 'levenshtein', 'rouge', 'bert', 'overlap', or 'bleu'.")
+
     similarities_with_index.sort(key=lambda x: x[1], reverse=True)
     return [index for index, score in similarities_with_index[:k]]
